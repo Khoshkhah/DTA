@@ -9,6 +9,8 @@ import sys
 import os
 sys.path.append(os.path.join(os.environ["SUMO_HOME"], 'tools'))
 import sumolib
+import graph
+
 EPSILON = 0.0000001
 
 
