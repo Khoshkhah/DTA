@@ -7,14 +7,12 @@ import os
 import sys 
 import multiprocessing 
 import random
+import csv
+import xml.etree.ElementTree as ET 
+
 
 import graph
-sumolib.os.environ["SUMO_HOME"]="/usr/share/sumo"
-if 'SUMO_HOME' in sumolib.os.environ:
-    tools = sumolib.os.path.join(sumolib.os.environ['SUMO_HOME'], 'tools')
-    sumolib.sys.path.append(tools)
-else:   
-    sumolib.sys.exit("please declare environment variable 'SUMO_HOME'")
+
 
 EPSILON = 0.0000001
 
@@ -80,7 +78,7 @@ def get_options(args=None):
          options.begin_time = str(0)
 
     if options.end_time is None:
-         options.begin_time = str(int(options.begin_time) + int(options.number_iteration))
+         options.end_time = str(int(options.begin_time) + int(options.interval_size))
 
     if options.graphedge_file is None:
         net = sumolib.net.readNet(options.net_file, withInternal=True)
@@ -148,6 +146,8 @@ def calculate_prob_choice(DAG, sorted_nodes, teta, vdict_last):
         neighbors_cost = dict()
         for node in neighbors.keys():
             tempdict = dict()
+            if len(neighbors[node])==0 and (sorted_nodes.index(node)!=0):
+                print(node)
             for item in neighbors[node]:
                 tempdict[item] = {"edgecost":DAG[node][item]["cost"]}
             neighbors_cost[node] = {"order":sorted_nodes.index(node),
@@ -170,8 +170,11 @@ def calculate_prob_choice(DAG, sorted_nodes, teta, vdict_last):
                         maxnode = node
                 nodesset.remove(maxnode)
                 if "vout" not in vdict[maxnode].keys():
+                    print("-----------------------------------------------------------")
                     print(maxnode)
                     print(vdict[maxnode])
+                    print("-----------------------------------------------------------")
+
                 else:
                     nodesset.add(vdict[maxnode]["vout"])
             return nodesset.pop()
@@ -188,10 +191,14 @@ def calculate_prob_choice(DAG, sorted_nodes, teta, vdict_last):
 
         nodesset = set(vdict[node]["neighbors"].keys())
         if len(nodesset)==0:
-            dict[node]["vcost"] = 0
+            vdict[node]["vcost"] = 0
+            print("*************************************")
+            print(vdict[node])
+            print("*************************************")
+
         elif len(nodesset)==1:
-            vdict[node]["vcost"] = EPSILON
             mynode = nodesset.pop()
+            vdict[node]["vcost"] = vdict[node]["neighbors"][mynode]["edgecost"]
             vdict[node]["vout"] = mynode
             vdict[node]["neighbors"][mynode]["prob"] = 1
         else:  
@@ -212,11 +219,11 @@ def calculate_prob_choice(DAG, sorted_nodes, teta, vdict_last):
             w = dict()
             sumw = 0
             for vertex in vdict[node]["neighbors"].keys():
-                w[vertex] = EPSILON
+                w[vertex] = 1 #EPSILON 
                 if vdict_last!=None:
                     if node in vdict_last.keys():
                         if vertex in vdict_last[node]["neighbors"].keys():
-                            w[vertex] = vdict_last[node]["neighbors"][vertex]["prob"]+EPSILON
+                            w[vertex] = vdict_last[node]["neighbors"][vertex]["prob"] + 1 #EPSILON
 
                 vdict[node]["neighbors"][vertex]["prob"] = expdict[vertex]/sumexp
                 w[vertex] = w[vertex]*vdict[node]["neighbors"][vertex]["prob"]
@@ -290,6 +297,7 @@ def parallel_route(destination_id, tripdf, G, id2type, option, vdict_last, retur
     tempdict["route"] = mydf
     tempdict["vdict"] = dtree
     return_dict[destination_id] = tempdict
+    
 def route_df2xml(route, address):
     def convert_row(row):
         return """
@@ -304,6 +312,103 @@ def route_df2xml(route, address):
     with open(address, 'w') as myfile: 
         myfile.write(text0+text1+text2+text3)
 
+#####  SIMULATION   ####################
+
+def create_edge_data_add(iteration, option):
+        
+    text0 = """<?xml version="1.0" encoding="UTF-8"?>\n\n\n"""
+    text1 = """<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
+"""
+    text2 = """
+        <edgeData id="%s" freq="%s" file="%s" excludeEmpty="%s" withInternal="%s"/>"""%("dump_", option.interval_size, "aggregated_"+str(iteration) +".xml", "true","true")
+
+    text3 = """\n</additional>"""
+    with open(option.output_location+"edge_data_add_"+str(iteration) +".xml", 'w') as myfile: 
+        myfile.write(text0+text1+text2+text3)
+
+def sumoCommand(iteration, option):
+    diroutput = option.output_location
+    if (not sumolib.os.path.isdir(diroutput)):
+        os.mkdir(diroutput,mode=0o777) 
+    sc_dict = dict()
+    sc_dict["--net-file"] = option.net_file
+    sc_dict["--route-files"] = diroutput + "routes_"+str(iteration) +".xml"
+    sc_dict["--statistic-output"] = diroutput + "statistic_output_" + str(iteration) +".xml"
+    sc_dict["--additional-files"] = diroutput + "edge_data_add_" + str(iteration) +".xml"
+    sc_dict["--tripinfo-output"] = diroutput + "trip_info.xml"
+    sc_dict["--tripinfo-output.write-undeparted"] = "true"
+
+    sc_dict["--no-warnings"] = "true"
+    sc_dict["--no-step-log"] = "true"
+    sc_dict["--end"] = option.end_time
+    sc_dict["--begin"] = option.begin_time
+    sumoCmd = list()
+    sumoCmd.append(option.sumo_binary)
+    for key in sc_dict.keys():
+        sumoCmd.append(key)
+        sumoCmd.append(sc_dict[key])
+    return sumoCmd
+
+def cost_update(G_df, net, iteration, option):
+    sumolib.subprocess.call(["python3", option.tools+"/xml/xml2csv.py",option.output_location+"aggregated_"+str(iteration) +".xml"])
+    aggregated = pd.read_csv(option.output_location+"aggregated_"+str(iteration) +".csv", sep=";")
+    alledges = set(aggregated["edge_id"])
+    aggregated = aggregated[aggregated["edge_traveltime"].notna()]
+
+    _edge2time = aggregated.set_index("edge_id")["edge_traveltime"].to_dict()
+    #for key in _edge2time.keys():
+    #    edge = net.getEdge(key)
+    #    if _edge2time[key] < edge.getLength()/edge.getSpeed():
+    #        print(str(key) + "  :  "+str(_edge2time[key]) + "  " + str(edge.getLength()/edge.getSpeed()))
+    
+    for edge in net.getEdges():
+        if not(edge.getID() in _edge2time.keys()):
+            _edge2time[edge.getID()] = edge.getLength()/edge.getSpeed()
+        else:
+            _edge2time[edge.getID()] = max(_edge2time[edge.getID()], edge.getLength()/edge.getSpeed())
+            
+    _G_df = G_df.copy()
+    _G_df["cost"] = G_df.apply(lambda row: _edge2time[row.id] if row.id in _edge2time.keys() else row.cost, axis=1)
+    _G_df["speed"] = G_df.apply(lambda row: row.length/row.cost, axis =1)
+    return _G_df
+
+def run_simulation(iteration, net, graphedge, option):
+    scommand = sumoCommand(iteration, option)
+    create_edge_data_add(iteration, option)
+    sumolib.subprocess.call(scommand)
+    new_G_df = cost_update(graphedge, net,iteration, option)
+    G = nx.from_pandas_edgelist(new_G_df, source="from", target="to", edge_attr=True, create_using=nx.DiGraph)
+    return G
+
+def update_report(iteration, report_fieldnames, option):
+    tree = ET.parse(option.output_location+"statistic_output_" + str(iteration)+".xml") 
+    root = tree.getroot() 
+    report = dict()
+    report["iteration"] = iteration
+    report["v_loaded"]   = int(root[0].attrib["loaded"])
+    report["v_inserted"] = int(root[0].attrib["inserted"])
+    report["v_running"]  = int(root[0].attrib["running"])
+    report["v_waiting"]  = int(root[0].attrib["waiting"])
+    report["t_total"] = int(root[1].attrib["total"])
+    report["t_jam"] = int(root[1].attrib["jam"])
+    report["t_yield"] = int(root[1].attrib["yield"])
+    report["t_wrongLane"] = int(root[1].attrib["wrongLane"])
+    report["s_collisions"] = int(root[2].attrib["collisions"])
+    report["s_emergencyStops"] = int(root[2].attrib["emergencyStops"])
+    report["vts_routeLength"] = float(root[4].attrib["routeLength"])
+    report["vts_speed"] = float(root[4].attrib["speed"])
+    report["vts_duration"] = float(root[4].attrib["duration"])
+    report["vts_waitingTime"] = float(root[4].attrib["waitingTime"])
+    report["vts_timeLoss"] = float(root[4].attrib["timeLoss"])
+    report["vts_departDelay"] = float(root[4].attrib["departDelay"])
+    report["vts_departDelayWaiting"] = float(root[4].attrib["departDelayWaiting"])
+    report["vts_totalTravelTime"] = float(root[4].attrib["totalTravelTime"])
+    report["vts_totalDepartDelay"] = float(root[4].attrib["totalDepartDelay"])
+    with open(option.output_location+"report.csv", 'a', encoding='UTF8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=report_fieldnames)
+        writer.writerow(report)  
+
+
 def main():
     option = get_options()
     manager = multiprocessing.Manager()
@@ -315,24 +420,36 @@ def main():
     vdict_last = None
     G = nx.from_pandas_edgelist(graphedge, source="from", target="to", edge_attr=True, create_using=nx.DiGraph)
     id2type = graphedge.set_index("id")["type"].copy()
+    report_fieldnames = [ "iteration", "v_loaded", "v_inserted","v_running","v_waiting","t_total",
+                     "t_jam","t_yield", "t_wrongLane","s_collisions","s_emergencyStops",
+                     "vts_routeLength","vts_speed","vts_duration","vts_waitingTime","vts_timeLoss",
+                     "vts_departDelay","vts_departDelayWaiting","vts_totalTravelTime","vts_totalDepartDelay"]
+    
+    with open(option.output_location +'report.csv', 'w', encoding='UTF8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=report_fieldnames)
+        writer.writeheader()
+
     processes = []
     destinations = set(trip["to_node"].unique())
+    for iteration in range(int(option.number_iteration)):
+        for destination_id in destinations:
+            #print(destination_id)
+            #parallel_route(destination_id, trip, G, id2type, option, return_dict)
+            p = multiprocessing.Process(target = parallel_route, args=(destination_id,trip,G,id2type, option, vdict_last, return_dict))
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join() 
 
-    for destination_id in destinations:
-        #print(destination_id)
-        #parallel_route(destination_id, trip, G, id2type, option, return_dict)
-        p = multiprocessing.Process(target = parallel_route, args=(destination_id,trip,G,id2type, option, vdict_last, return_dict))
-        p.start()
-        processes.append(p)
-    for p in processes:
-        p.join() 
+        route = pd.concat([return_dict[key]["route"] for key in return_dict.keys()])
+        vdict_last = {key:return_dict[key]["vdict"] for key in return_dict.keys()}
+        #pd.to_pickle(vdict, option.output_location +"vdict.pkl")
+        route = route.sort_values(["time"])
+        route = route.reset_index(drop=True)
+        route.to_csv(option.output_location + "routes_"+str(iteration) +".xml", index=False)
+        route_df2xml(route, option.output_location + "routes_"+str(iteration) +".xml")
+        G = run_simulation(iteration, net, graphedge, option)
+        update_report(iteration, report_fieldnames, option)
 
-
-    route = pd.concat([return_dict[key]["route"] for key in return_dict.keys()])
-    vdict = {key:return_dict[key]["vdict"] for key in return_dict.keys()}
-    pd.to_pickle(vdict, option.output_location +"vdict.pkl")
-    route = route.sort_values(["time"])
-    route.to_csv(option.output_location + "route_0.csv", index=False)
-    route_df2xml(route, option.output_location + "route_0.xml")
 if __name__=="__main__":
     main()
