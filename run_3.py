@@ -314,28 +314,28 @@ def route_df2xml(route, address):
 
 #####  SIMULATION   ####################
 
-def create_edge_data_add(iteration, option):
+def create_edge_data_add(iteration,sample, option):
         
     text0 = """<?xml version="1.0" encoding="UTF-8"?>\n\n\n"""
     text1 = """<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
 """
     text2 = """
-        <edgeData id="%s" freq="%s" file="%s" excludeEmpty="%s" withInternal="%s"/>"""%("dump_", option.interval_size, "aggregated_"+str(iteration) +".xml", "true","true")
+        <edgeData id="%s" freq="%s" file="%s" excludeEmpty="%s" withInternal="%s"/>"""%("dump_", option.interval_size, "aggregated_"+str(iteration) +"_"+str(sample)+".xml", "true","true")
 
     text3 = """\n</additional>"""
-    with open(option.output_location+"edge_data_add_"+str(iteration) +".xml", 'w') as myfile: 
+    with open(option.output_location+"edge_data_add_"+str(iteration) +"_"+str(sample)+".xml", 'w') as myfile: 
         myfile.write(text0+text1+text2+text3)
 
-def sumoCommand(iteration, option):
+def sumoCommand(iteration, sample, option):
     diroutput = option.output_location
     if (not sumolib.os.path.isdir(diroutput)):
         os.mkdir(diroutput,mode=0o777) 
     sc_dict = dict()
     sc_dict["--net-file"] = option.net_file
-    sc_dict["--route-files"] = diroutput + "routes_"+str(iteration) +".xml"
-    sc_dict["--statistic-output"] = diroutput + "statistic_output_" + str(iteration) +".xml"
-    sc_dict["--additional-files"] = diroutput + "edge_data_add_" + str(iteration) +".xml"
-    sc_dict["--tripinfo-output"] = diroutput + "trip_info.xml"
+    sc_dict["--route-files"] = diroutput + "routes_"+str(iteration) +"_"+str(sample)+".xml"
+    sc_dict["--statistic-output"] = diroutput + "statistic_output_" + str(iteration)+"_"+str(sample) +".xml"
+    sc_dict["--additional-files"] = diroutput + "edge_data_add_" + str(iteration) +"_"+str(sample)+".xml"
+    sc_dict["--tripinfo-output"] = diroutput + "trip_info_"+"_"+str(sample)+".xml"
     sc_dict["--tripinfo-output.write-undeparted"] = "true"
     sc_dict["--route-steps"] = "200"
     sc_dict["--no-internal-links"] = "False"
@@ -355,8 +355,8 @@ def sumoCommand(iteration, option):
         sumoCmd.append(sc_dict[key])
     return sumoCmd
 
-def cost_update(G_df, net, iteration, option, interval):
-    aggregated = pd.read_csv(option.output_location+"aggregated_"+str(iteration) +".csv", sep=";")
+def cost_update(G_df, net, iteration, option, interval, best_sample):
+    aggregated = pd.read_csv(option.output_location+"aggregated_"+str(iteration)+"_"+str(best_sample) +".csv", sep=";")
     aggregated = aggregated[aggregated["interval_begin"]==interval]
     alledges = set(aggregated["edge_id"])
     aggregated = aggregated[aggregated["edge_traveltime"].notna()]
@@ -378,12 +378,12 @@ def cost_update(G_df, net, iteration, option, interval):
     _G_df["speed"] = G_df.apply(lambda row: row.length/row.cost, axis =1)
     return _G_df
 
-def run_simulation(iteration, net, graphedge, option, number_of_interval):
+def run_simulation(iteration,sample, net, graphedge, option, number_of_interval):
     scommand = sumoCommand(iteration, option)
     create_edge_data_add(iteration, option)
     sumolib.subprocess.call(scommand)
     
-    sumolib.subprocess.call(["python3", option.tools+"/xml/xml2csv.py",option.output_location+"aggregated_"+str(iteration) +".xml"])
+    sumolib.subprocess.call(["python3", option.tools+"/xml/xml2csv.py",option.output_location+"aggregated_"+str(iteration)+"_"+str(sample) +".xml"])
     G_list = list()
 
     for interval in range(number_of_interval):
@@ -392,7 +392,7 @@ def run_simulation(iteration, net, graphedge, option, number_of_interval):
         G_list.append(G)
     return G_list
 
-def paralle_simulation(iteration, net, trip, graphedge, vdict, number_of_interval, G, id2type, option):
+def parallel_simulation(iteration, sample, net, trip, graphedge, vdict, number_of_interval, G, id2type, option, return_G_dict):
     mydf = list()
     for interval in range(number_of_interval):
         trip_interval = trip[trip["interval"]==interval].reset_index(drop=True)
@@ -403,51 +403,60 @@ def paralle_simulation(iteration, net, trip, graphedge, vdict, number_of_interva
     route = pd.concat(mydf)
     route = route.sort_values(["time"])
     route = route.reset_index(drop=True)
-    route.to_csv(option.output_location + "routes_"+str(iteration) +".xml", index=False)
-    route_df2xml(route, option.output_location + "routes_"+str(iteration) +".xml")
+    route.to_csv(option.output_location + "routes_"+str(iteration)+"_"+str(sample) +".xml", index=False)
+    route_df2xml(route, option.output_location + "routes_"+str(iteration)+"_"+str(sample) +".xml")
     
-    scommand = sumoCommand(iteration, option)
-    create_edge_data_add(iteration, option)
+    scommand = sumoCommand(iteration,sample, option)
+    create_edge_data_add(iteration, sample, option)
     sumolib.subprocess.call(scommand)
-    
-    sumolib.subprocess.call(["python3", option.tools+"/xml/xml2csv.py",option.output_location+"aggregated_"+str(iteration) +".xml"])
-    G_list = list()
+    sumolib.subprocess.call(["python3", option.tools+"/xml/xml2csv.py",option.output_location+"aggregated_"+str(iteration)+"_"+str(sample) +".xml"])
+ 
 
+def return_G_best_sample(graphedge, net, iteration, best_sample, number_of_interval, option):
+    G_list = list()
     for interval in range(number_of_interval):
-        new_G_df = cost_update(graphedge, net,iteration, option, interval)
+        new_G_df = cost_update(graphedge, net,iteration, option, interval, best_sample)
         G = nx.from_pandas_edgelist(new_G_df, source="from", target="to", edge_attr=True, create_using=nx.DiGraph)
         G_list.append(G)
     return G_list
 
-
-
 def update_report(iteration, report_fieldnames, option):
-    tree = ET.parse(option.output_location+"statistic_output_" + str(iteration)+".xml") 
-    root = tree.getroot() 
-    report = dict()
-    report["iteration"] = iteration
-    report["v_loaded"]   = int(root[0].attrib["loaded"])
-    report["v_inserted"] = int(root[0].attrib["inserted"])
-    report["v_running"]  = int(root[0].attrib["running"])
-    report["v_waiting"]  = int(root[0].attrib["waiting"])
-    report["t_total"] = int(root[1].attrib["total"])
-    report["t_jam"] = int(root[1].attrib["jam"])
-    report["t_yield"] = int(root[1].attrib["yield"])
-    report["t_wrongLane"] = int(root[1].attrib["wrongLane"])
-    report["s_collisions"] = int(root[2].attrib["collisions"])
-    report["s_emergencyStops"] = int(root[2].attrib["emergencyStops"])
-    report["vts_routeLength"] = float(root[4].attrib["routeLength"])
-    report["vts_speed"] = float(root[4].attrib["speed"])
-    report["vts_duration"] = float(root[4].attrib["duration"])
-    report["vts_waitingTime"] = float(root[4].attrib["waitingTime"])
-    report["vts_timeLoss"] = float(root[4].attrib["timeLoss"])
-    report["vts_departDelay"] = float(root[4].attrib["departDelay"])
-    report["vts_departDelayWaiting"] = float(root[4].attrib["departDelayWaiting"])
-    report["vts_totalTravelTime"] = float(root[4].attrib["totalTravelTime"])
-    report["vts_totalDepartDelay"] = float(root[4].attrib["totalDepartDelay"])
-    with open(option.output_location+"report.csv", 'a', encoding='UTF8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=report_fieldnames)
-        writer.writerow(report)  
+    min_jam = 99999
+    min_index = -1
+    for sample in range(int(option.sample_iteration)):
+        tree = ET.parse(option.output_location+"statistic_output_" + str(iteration)+"_"+str(sample) +".xml") 
+        root = tree.getroot() 
+        report = dict()
+        report["iteration"] = iteration
+        report["sample"] = sample
+
+        report["v_loaded"]   = int(root[0].attrib["loaded"])
+        report["v_inserted"] = int(root[0].attrib["inserted"])
+        report["v_running"]  = int(root[0].attrib["running"])
+        report["v_waiting"]  = int(root[0].attrib["waiting"])
+        report["t_total"] = int(root[1].attrib["total"])
+        report["t_jam"] = int(root[1].attrib["jam"])
+        report["t_yield"] = int(root[1].attrib["yield"])
+        report["t_wrongLane"] = int(root[1].attrib["wrongLane"])
+        report["s_collisions"] = int(root[2].attrib["collisions"])
+        report["s_emergencyStops"] = int(root[2].attrib["emergencyStops"])
+        report["vts_routeLength"] = float(root[4].attrib["routeLength"])
+        report["vts_speed"] = float(root[4].attrib["speed"])
+        report["vts_duration"] = float(root[4].attrib["duration"])
+        report["vts_waitingTime"] = float(root[4].attrib["waitingTime"])
+        report["vts_timeLoss"] = float(root[4].attrib["timeLoss"])
+        report["vts_departDelay"] = float(root[4].attrib["departDelay"])
+        report["vts_departDelayWaiting"] = float(root[4].attrib["departDelayWaiting"])
+        report["vts_totalTravelTime"] = float(root[4].attrib["totalTravelTime"])
+        report["vts_totalDepartDelay"] = float(root[4].attrib["totalDepartDelay"])
+
+        if min_jam > report["t_jam"]:
+            min_jam = report["t_jam"]
+            min_index = sample
+        with open(option.output_location+"report.csv", 'a', encoding='UTF8', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=report_fieldnames)
+            writer.writerow(report)  
+    return min_index
 
 def add_interval_for_trips(option, trip):
     interval_size = int(option.interval_size)
@@ -458,7 +467,7 @@ def add_interval_for_trips(option, trip):
     return trip
 
 def main():
-    os.system("taskset -p -c 0,1,2,3,4,5,6,7,8,9,10,11,12,13 %d" % os.getpid())
+    os.system("taskset -p -c 0,1,2,3,4,5,6,7,8,9,10 %d" % os.getpid())
     option = get_options()
     manager = multiprocessing.Manager()
     return_dict = manager.dict()
@@ -476,7 +485,7 @@ def main():
         G_list.append(G.copy())
     
     id2type = graphedge.set_index("id")["type"].copy()
-    report_fieldnames = [ "iteration", "v_loaded", "v_inserted","v_running","v_waiting","t_total",
+    report_fieldnames = [ "iteration", "sample","v_loaded", "v_inserted","v_running","v_waiting","t_total",
                      "t_jam","t_yield", "t_wrongLane","s_collisions","s_emergencyStops",
                      "vts_routeLength","vts_speed","vts_duration","vts_waitingTime","vts_timeLoss",
                      "vts_departDelay","vts_departDelayWaiting","vts_totalTravelTime","vts_totalDepartDelay"]
@@ -511,8 +520,21 @@ def main():
         #route.to_csv(option.output_location + "routes_"+str(iteration) +".xml", index=False)
         #route_df2xml(route, option.output_location + "routes_"+str(iteration) +".xml")
         #G_list = run_simulation(iteration, net, graphedge, option, number_of_interval)
-        G_list = paralle_simulation(iteration, net, trip, graphedge, vdict_last, number_of_interval, G, id2type, option)
-        update_report(iteration, report_fieldnames, option)
+        return_G_dict = manager.dict()
+        processes = []
+
+        for sample in range(int(option.sample_iteration)):
+            p = multiprocessing.Process(target = parallel_simulation, args=(iteration, sample, net, trip,
+                            graphedge, vdict_last, number_of_interval, G, id2type, option, return_G_dict))
+            p.start()
+            processes.append(p)
+       
+        for p in processes:
+            p.join() 
+
+        
+        best_sample = update_report(iteration, report_fieldnames, option)
+        G_list = return_G_best_sample(graphedge, net, iteration, best_sample, number_of_interval, option)
 
 if __name__=="__main__":
     main()
