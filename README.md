@@ -40,6 +40,8 @@ Also for running the DTA tool, you can use a configuration xml file like [grid.c
 
         python run.py -c grid-sample/grid.cfg
 
+for monitoring the procedure of the algorithm, look into "run.log" and "report.csv" files in the output. 
+
 
 ## Contact Information
 
