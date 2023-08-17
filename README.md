@@ -38,7 +38,7 @@ For getting the other optional arguments use the help command:
 
 Also for running the DTA tool, you can use a configuration xml file like [grid.cfg](./grid-sample/grid.cfg):
 
-        python run.py -c grid_sample/grid.cfg
+        python run.py -c grid-sample/grid.cfg
 
 
 ## Contact Information
