@@ -30,7 +30,7 @@ The calibration tool has to be started via [run.py](run.py), which is a command 
 
 5. -sample-iteration  number of sampling for getting travel time average for each edge, default is 5.
 
-For more information of these input look at the sample grid in the [examples/grid](./examples/grid/) directory.
+For more information of these input look at the sample grid in the [examples/grid](./grid_sample/) directory.
 
 For getting the other optional arguments use the help command:
 
