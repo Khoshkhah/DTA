@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-The calibration tool has to be started via [run.py](run.py), which is a command line application. It has the necessary following parameters:
+The DTA tool has to be started via [run.py](run.py), which is a command line application. It has the necessary following parameters:
 
 1. -n network file address, that is a sumo network file.
 
