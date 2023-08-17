@@ -30,13 +30,13 @@ The calibration tool has to be started via [run.py](run.py), which is a command 
 
 5. -sample-iteration  number of sampling for getting travel time average for each edge, default is 5.
 
-For more information of these input look at the sample grid in the [grid_sample](./grid_sample/) directory.
+For more information of these input look at the sample grid in the [grid-sample](./grid-sample/) directory.
 
 For getting the other optional arguments use the help command:
 
          python run.py --help
 
-Also for running the DTA tool, you can use a configuration xml file like [grid.cfg](./grid_sample/grid.cfg):
+Also for running the DTA tool, you can use a configuration xml file like [grid.cfg](./grid-sample/grid.cfg):
 
         python run.py -c grid_sample/grid.cfg
 
